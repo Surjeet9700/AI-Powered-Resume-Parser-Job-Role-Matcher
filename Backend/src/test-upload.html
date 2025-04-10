@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resume Upload Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+        #result { margin-top: 20px; padding: 10px; border: 1px solid #ddd; min-height: 200px; }
+    </style>
+</head>
+<body>
+    <h1>Resume Upload Test</h1>
+    
+    <form id="uploadForm" enctype="multipart/form-data">
+        <div>
+            <label for="resume">Select a resume file (PDF or DOCX):</label>
+            <input type="file" id="resume" name="resume" accept=".pdf,.docx" required>
+        </div>
+        <div style="margin-top: 10px;">
+            <button type="submit">Upload Resume</button>
+        </div>
+    </form>
+    
+    <div id="result">Results will appear here...</div>
+    
+    <script>
+        // Check if the server is running on page load
+        window.addEventListener('load', async () => {
+            const resultDiv = document.getElementById('result');
+            try {
+                const response = await fetch('http://localhost:5000/', {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Server check successful:', data);
+                    resultDiv.innerHTML = '<p>Server connection successful. Ready to upload.</p>';
+                } else {
+                    throw new Error(`Server returned status: ${response.status}`);
+                }
+            } catch (error) {
+                console.error('Server check failed:', error);
+                resultDiv.innerHTML = `
+                    <p style="color: red;">Warning: Cannot connect to server at http://localhost:5000/</p>
+                    <p>Make sure your backend server is running.</p>
+                `;
+            }
+        });
+
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('resume');
+            const resultDiv = document.getElementById('result');
+            
+            if (fileInput.files.length === 0) {
+                resultDiv.innerHTML = '<p style="color: red;">Please select a file</p>';
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            console.log('Selected file:', file.name, 'Size:', file.size, 'Type:', file.type);
+            
+            const formData = new FormData();
+            formData.append('resume', file);
+            
+            resultDiv.innerHTML = '<p>Uploading... Please wait, this may take a minute.</p>';
+            
+            try {
+                console.log('Starting upload request');
+                const response = await fetch('http://localhost:5000/api/resumes/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                console.log('Upload response received:', response.status);
+                
+                // Try to parse the response as JSON
+                let data;
+                try {
+                    data = await response.json();
+                } catch (parseError) {
+                    console.error('Error parsing response as JSON:', parseError);
+                    const text = await response.text();
+                    resultDiv.innerHTML = `
+                        <h3>Error Parsing Response</h3>
+                        <p>Status: ${response.status} ${response.statusText}</p>
+                        <p>Response is not valid JSON:</p>
+                        <pre>${text.substring(0, 500)}${text.length > 500 ? '...' : ''}</pre>
+                    `;
+                    return;
+                }
+                
+                if (response.ok) {
+                    if (data.skills && data.skills.length === 0) {
+                        resultDiv.innerHTML = `
+                            <h3>Upload Successful, but No Skills Extracted</h3>
+                            <p>Resume ID: ${data.resumeId}</p>
+                            <p style="color: red;">Warning: No skills were extracted. This may be due to missing or invalid API keys.</p>
+                            <p>Please check your .env file and make sure you have valid GEMINI_API_KEY set.</p>
+                            <p>Get your API key from: <a href="https://aistudio.google.com/app/apikey" target="_blank">https://aistudio.google.com/app/apikey</a></p>
+                        `;
+                    } else {
+                        let skillsHtml = '<ul>';
+                        data.skills.forEach(skill => {
+                            skillsHtml += `<li>${skill}</li>`;
+                        });
+                        skillsHtml += '</ul>';
+                        
+                        resultDiv.innerHTML = `
+                            <h3>Upload Successful!</h3>
+                            <p>Resume ID: ${data.resumeId}</p>
+                            <h4>Extracted Skills:</h4>
+                            ${skillsHtml}
+                            <h4>Job Recommendations:</h4>
+                            <p>Loading job recommendations...</p>
+                            <button id="fetchJobsBtn" onclick="fetchJobs('${data.resumeId}')">Fetch Job Recommendations</button>
+                        `;
+                    }
+                } else {
+                    resultDiv.innerHTML = `
+                        <h3>Upload Failed</h3>
+                        <p>Status: ${response.status} ${response.statusText}</p>
+                        <p>Error: ${data.error || 'Unknown error'}</p>
+                        <p>Details: ${data.details || 'No additional details'}</p>
+                    `;
+                }
+            } catch (error) {
+                console.error('Fetch error:', error);
+                resultDiv.innerHTML = `
+                    <h3>Network Error</h3>
+                    <p>${error.message}</p>
+                    <p>Please check your console for more details.</p>
+                    <p>Troubleshooting tips:</p>
+                    <ul>
+                        <li>Verify the server is running on port 5000</li>
+                        <li>Check that CORS is properly configured</li>
+                        <li>Try using a smaller file for testing</li>
+                        <li>Check the server logs for any errors</li>
+                    </ul>
+                `;
+            }
+        });
+        
+        // Add a function to fetch jobs for a resume
+        async function fetchJobs(resumeId) {
+            const resultDiv = document.getElementById('result');
+            const jobsSection = resultDiv.querySelector('h4:last-of-type').nextElementSibling;
+            
+            jobsSection.textContent = 'Loading job recommendations...';
+            
+            try {
+                const response = await fetch(`http://localhost:5000/api/resumes/${resumeId}/jobs`);
+                const data = await response.json();
+                
+                if (response.ok && data.jobs && data.jobs.length > 0) {
+                    let jobsHtml = '<div class="jobs-container">';
+                    
+                    data.jobs.forEach(job => {
+                        jobsHtml += `
+                            <div class="job-card" style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 4px;">
+                                <h3>${job.title}</h3>
+                                <p><strong>Company:</strong> ${job.company}</p>
+                                <p><strong>Location:</strong> ${job.location}</p>
+                                <p><strong>Description:</strong> ${job.description.substring(0, 150)}${job.description.length > 150 ? '...' : ''}</p>
+                                <a href="${job.applyLink}" target="_blank" style="display: inline-block; background: #4CAF50; color: white; padding: 5px 10px; text-decoration: none; border-radius: 4px;">Apply Now</a>
+                            </div>
+                        `;
+                    });
+                    
+                    jobsHtml += '</div>';
+                    jobsSection.innerHTML = jobsHtml;
+                } else {
+                    jobsSection.innerHTML = '<p>No job recommendations found. Please try different skills.</p>';
+                }
+            } catch (error) {
+                console.error('Error fetching jobs:', error);
+                jobsSection.innerHTML = `<p style="color: red;">Error fetching job recommendations: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>
